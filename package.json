@@ -1,0 +1,12 @@
+{
+  "name": "webboy",
+  "version": "0.0.2",
+  "description": "Boy of the Web",
+  "main": "main.js",
+  "author": "Haoyan Qi",
+  "license": "MIT",
+  "private": true,
+  "dependencies": {
+    "convert-hrtime": "^2.0.0"
+  }
+}

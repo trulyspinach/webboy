@@ -1,12 +1,54 @@
+const {bitarray8r, bit_at, to_signed_int8, bitarray8_to_number, bitarray8} = require('./utils.js');
+
+
 let array8 = [0,1,2,3,4,5,6,7];
+
+class GPUStats{
+    constructor(){
+        this.stat = {
+            bit0:0, bit1:0,
+            coin_flag:0,
+            hblank_int:0,
+            vblank_int:0,
+            oam_int:0,
+            coin_int:0,
+        };
+
+        this.keys = Object.keys(this.stat);
+    }
+
+    set_byte(v){
+        let cm = this.get_mode();
+        let ba = bitarray8(v);
+        for(let i = 0; i < 8; i++)
+            this.stat[this.keys[i]] = ba[i];
+        this.set_mode(cm);
+    }
+
+    get_byte(){
+        return bitarray8_to_number([...this.keys.map(i => this.stat[i]), 0]);
+    }
+
+    set_mode(v){
+        this.stat.bit0 = v & 0x01;
+        this.stat.bit1 = v >> 1;
+    }
+
+    get_mode(){
+        return (this.stat.bit1 << 1) + this.stat.bit0;
+    }
+}
 
 class GPU{
     constructor(){
+        this.cpu = null;
+
         this.screen_out = Array(160 * 144).fill(0);
 
         this.vram = Array(0x2000).fill(0);
+        this.oam = Array(0xa0).fill(0);
         this.lcdc = 0;
-        this.stat = 0;
+        this.stat = new GPUStats();
 
         this.scy = 0; this.scx = 0; //background scroll
         this.ly = 0; // current drawing line
@@ -41,30 +83,8 @@ class GPU{
     set_background_enabled(v){let code = v << 0; this.lcdc = (this.lcdc & ~code) | code;}
     background_enabled(){return this.lcdc & 0x1;}
 
-    mode(){ return this.stat & 0x3;}
-    set_mode(m){
-        this.stat = (this.stat & 0xfc) | m;
-    }
-
-    reset(){
-        this.screen_out = Array(160 * 144).fill(0);
-
-        this.vram = Array(0x2000).fill(0);
-        this.lcdc = 0;
-        this.stat = 0;
-
-        this.scy = 0; this.scx = 0;
-        this.ly = 0;
-        this.lyc = 0;
-        this.wy = 0; this.wx = 0;
-
-        this.bg_pal = 0;
-        this.obj_pal0 = 0;
-        this.obj_pal1 = 0;
-
-        this.clock = 0;
-        this.frames = 0;
-    }
+    mode(){ return this.stat.get_mode();}
+    set_mode(m){ this.stat.set_mode(m);}
 
     tick(cycles){
         if(!this.lcd_enabled()){
@@ -89,7 +109,8 @@ class GPU{
         //During VBlank
         if(this.ly > 143 && this.mode() !== 1){
             this.set_mode(1);
-            //TODO: VBlank Interrupt
+            this.cpu.request_vblank_interrupt();
+
             this.frames++;
             this.generate_tile_cache();
             // if(this.frames % 20 === 0) this.print_screen();
@@ -150,7 +171,7 @@ class GPU{
         for(let t = 0; t < 384; t++){
             if(this.tile_cache[t] !== 0) continue;
 
-            let d = [...Array(16).keys()].map(i => bitarray8(this.read_byte(offset + i + (t * 16))));
+            let d = [...Array(16).keys()].map(i => bitarray8r(this.read_byte(offset + i + (t * 16))));
             this.tile_cache[t] = array8.map(i =>
                 array8.map(bit =>
                     d[i * 2][bit] + d[i * 2 + 1][bit] * 2
@@ -168,7 +189,7 @@ class GPU{
     }
 
     color_for(palette, v){
-        let p = bitarray8(palette);
+        let p = bitarray8r(palette);
         let b = 3 - v;
         return p[b*2] + (p[b*2+1] << 1);
     }
@@ -181,9 +202,12 @@ class GPU{
                 return this.vram[addr & 0x1fff];
 
             case 0xf000:
+                if(addr >= 0xfe00 && addr < 0xfea0)
+                    return this.oam[addr & 0xff];
+
                 switch(addr){
                     case 0xff40: return this.lcdc;
-                    case 0xff41: return this.stat;
+                    case 0xff41: return this.stat.get_byte();
                     case 0xff42: return this.scy;
                     case 0xff43: return this.scx;
                     case 0xff44: return this.ly;
@@ -211,9 +235,13 @@ class GPU{
                 break;
 
             case 0xf000:
+                if(addr >= 0xfe00 && addr < 0xfea0){
+                    this.oam[addr & 0xff] = v;
+                    break;
+                }
                 switch (addr) {
                     case 0xff40: this.lcdc = v; break;
-                    case 0xff41: console.error("GPU: Interrupt select not implemented.");//return this.stat;
+                    case 0xff41: this.stat.set_byte(v);//return this.stat;
                     case 0xff42: this.scy = v; break;
                     case 0xff43: this.scx = v; break;
                     case 0xff44: throw "GPU: Don't fuck with line counter.";
@@ -223,12 +251,12 @@ class GPU{
                     case 0xff47: this.bg_pal = v; break;
                     case 0xff48: this.obj_pal0 = v; break;
                     case 0xff49: this.obj_pal1 = v; break;
-                    default: throw `GPU: Writing to unknown address ${addr.toString(16)}`;
+                    default: console.log(`GPU: Writing to unknown address ${addr.toString(16)}`);
                 }
                 break;
 
             default:
-                throw `GPU: Writing to unknown address ${addr.toString(16)}`;
+                console.log(`GPU: Writing to unknown address ${addr.toString(16)}`);
         }
     }
 
@@ -243,22 +271,5 @@ class GPU{
         console.log(s);
     }
 }
-
-//Helper
-function to_signed_int8(v) {
-    if(v & 0x80) {
-        return -(~v & 0xff) - 1;
-    }
-
-    else return v & 0xff;
-}
-
-
-function bit_at(num, index){ return num & (0x1 << index);}
-
-function bitarray8(v){
-    return [...Array(8).keys()].map(i => (v >> (7 - i)) & 1);
-}
-
 
 module.exports = GPU;

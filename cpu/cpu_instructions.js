@@ -1,4 +1,5 @@
 const {ext_handler, GET_REG, SET_REG} = require('./cpu_instructions_ext.js');
+const {to_signed_int8, rotate} = require('../utils.js');
 
 function NOP(h){ return {pc: 1, cycle: 4};}
 function STOP(h){ alert("System paused"); return {pc: 2, cycle: 4};}
@@ -84,7 +85,14 @@ function PUSH_BC(h){ h.stack_push_16((h.regs.b << 8) + h.regs.c); return {pc: 1,
 function PUSH_DE(h){ h.stack_push_16((h.regs.d << 8) + h.regs.e); return {pc: 1, cycle: 16};}
 function PUSH_HL(h){ h.stack_push_16((h.regs.h << 8) + h.regs.l); return {pc: 1, cycle: 16};}
 
-function POP_AF(h){ let v = h.stack_pop_16(); h.regs.a = v >> 8; h.regs.f = v & 0xff; return {pc: 1, cycle: 12};}
+function POP_AF(h){
+    let v = h.stack_pop_16();
+    h.regs.a = v >> 8;
+    h.regs.f = v & 0xff;
+    h.regs.f &= 0xf0;
+    return {pc: 1, cycle: 12};
+
+}
 function POP_BC(h){ let v = h.stack_pop_16(); h.regs.b = v >> 8; h.regs.c = v & 0xff; return {pc: 1, cycle: 12};}
 function POP_DE(h){ let v = h.stack_pop_16(); h.regs.d = v >> 8; h.regs.e = v & 0xff; return {pc: 1, cycle: 12};}
 function POP_HL(h){ let v = h.stack_pop_16(); h.regs.h = v >> 8; h.regs.l = v & 0xff; return {pc: 1, cycle: 12};}
@@ -137,7 +145,30 @@ function ADD_SP_IMM8S(h){ h.f_reset(); let adder = h.mmu.read_byte(h.regs.pc + 1
 function LD_HL_SPIMM8S(h){ h.f_reset(); let adder = h.mmu.read_byte(h.regs.pc + 1); let r = h.regs.sp + to_signed_int8(adder); change_half_carry(h, half_carry_add16(h.regs.sp, adder)); change_carry(h, r > 0xffff); r = r & 0xffff; h.regs.h = r >> 8; h.regs.l = r & 0xff; return {pc: 2, cycle: 12};}
 
 function CPL(h){ h.regs.a ^= 0xff; h.f_set_sub(); h.f_set_hcarry(); return {pc: 1, cycle: 4};}
-function DAA(h){ let c = 0; let v = h.regs.a; if(f.f_hcarry() || (!h.f_sub() && (v & 0xff) > 9)) c |= 0x6; if(f.f_carry() || (!h.f_sub() && v > 0x99)){ c |= 0x60; h.f_set_carry();} h.regs.a += h.f_sub()? -c : c; h.regs.a &= 0xff; change_zero(h, h.regs.a === 0); return {pc: 1, cycle: 4};}
+function DAA(h){
+    if(!h.f_sub()){
+        if(h.f_carry() || h.regs.a > 0x99){
+            h.regs.a = (h.regs.a + 0x60) & 0xff;
+            h.f_set_carry();
+        }
+        if(h.f_hcarry() || (h.regs.a & 0xf) > 0x9){
+            h.regs.a = (h.regs.a + 0x06) & 0xff;
+            h.f_reset_hcarry();
+        }
+    } else if(h.f_carry() && h.f_hcarry()){
+        h.regs.a = (h.regs.a + 0x9a) & 0xff;
+        h.f_reset_hcarry();
+    } else if(h.f_carry()){
+        h.regs.a = (h.regs.a + 0xa0) & 0xff;
+    } else if(h.f_hcarry()){
+        h.regs.a = (h.regs.a + 0xfa) & 0xff;
+        h.f_reset_hcarry();
+    }
+
+    change_zero(h, h.regs.a === 0);
+
+    return {pc: 1, cycle: 4};
+}
 function SCF(h){ h.f_reset_sub(); h.f_reset_hcarry(); h.f_set_carry(); return {pc: 1, cycle: 4};}
 function CCF(h){ h.f_reset_sub(); h.f_reset_hcarry(); change_carry(h, !h.f_carry()); return {pc: 1, cycle: 4};}
 
@@ -181,29 +212,24 @@ function EI(h){ h.enable_int_master(); return {pc: 1, cycle: 4};}
 function HALT(h) { throw "CPU Halted :(";}
 
 //Helpers
-function to_signed_int8(v) {
-    if(v & 0x80) {
-        return -(~v & 0xff) - 1;
-    }
-    else return v & 0xff;
-}
-
-function rotate(value, vector){
-    let wrapped = vector % 8;
-    if(!wrapped) return value;
-    if(wrapped < 0) wrapped += 8;
-    return ((value << wrapped) | (value >> (8 - wrapped))) & 0xff;
-}
-
 function tested_ret(h){h.regs.pc = h.stack_pop_16(); return {pc: 0, cycle: 20};}
 
-function half_carry_add8(a, b){ return ((a & 0xf) + (b & 0xf)) & 0x10 === 0x10;}
-function half_carry_add16(a, b){ return ((a & 0xfff) + (b & 0xfff)) & 0x1000 === 0x1000;}
+function half_carry_add8(a, b){ return ((a & 0xf) + (b & 0xf)) > 0xf;}
+function half_carry_add16(a, b){ return ((a & 0xfff) + (b & 0xfff)) > 0xfff;}
 function half_carry_sub8(a, b){ return ((a & 0xf) - (b & 0xf)) < 0;}
 
 function EXT(h){
     let op = h.mmu.read_byte(h.regs.pc + 1);
     return {pc: 2, cycle: ext_handler(h, op)};
+}
+
+function get_ins_name(code){
+    switch (code & 0xc0) {
+        case 0x40: return "some load";
+        case 0x80: return "some alu";
+        default:
+            return map[code].name;
+    }
 }
 
 function handler(h, code){
@@ -355,4 +381,7 @@ map = {
     0xcb: EXT
 };
 
-module.exports = handler;
+module.exports = {
+    handler,
+    get_ins_name
+};

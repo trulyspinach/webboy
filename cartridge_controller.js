@@ -1,10 +1,16 @@
 const fs = require('fs');
 const tetris = require('./cartridges/tetris.js');
+const cpu_ins_test = require('./cartridges/cpu_instru_test.js');
 
 class CartridgeController{
     constructor(rom_file){
         if(rom_file === "t"){
             this.full_rom = tetris;
+            return;
+        }
+
+        if(rom_file === "cpu_test"){
+            this.full_rom = cpu_ins_test;
             return;
         }
 
@@ -24,7 +30,7 @@ class CartridgeController{
             if(i % 32 === 0) s += '\n';
         }
 
-        fs.writeFileSync("./temp.rb", s);
+        fs.writeFileSync("./temp.wbb", s);
     }
 
     // read_word(addr){

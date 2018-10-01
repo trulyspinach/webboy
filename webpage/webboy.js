@@ -3,10 +3,10 @@ const GPU = require('../gpu.js');
 const MMU = require('../memory_controller.js');
 const CC = require('../cartridge_controller.js');
 
-let cartridge = new CC('t');
+let cartridge = new CC('cpu_test');
 let gpu = new GPU();
 let mmu = new MMU(cartridge, gpu);
-let cpu = new CPU(mmu);
+let cpu = new CPU(mmu, gpu);
 
 let colorMap = {
     3: 255,
@@ -15,26 +15,35 @@ let colorMap = {
     0: 0
 };
 
-var main_canvas, main_ctx, main_image;
-var debug_canvas, debug_ctx, debug_image;
+let main_canvas, main_ctx, main_image;
+let debug_canvas, debug_ctx, debug_image;
+let ins_his_text, cpu_text;
 
 window.onload=function(){
     main_canvas = document.getElementById('screen');
     main_ctx = main_canvas.getContext('2d');
     main_image = main_ctx.createImageData(160,144);
 
+    ins_his_text = document.getElementById('current_ins');
+    cpu_text = document.getElementById('reg');
+
     for(let i=0; i<160*144*4; i++)
         main_image.data[i] = 50;
 
     main_ctx.putImageData(main_image, 0, 0);
     main_ctx.imageSmoothingEnabled = false;
-    setInterval(tick_frame, 0.02);
+    // setInterval(tick_frame, 0.02);
     main_ctx.scale(3,3);
     debug_view_init();
     let button = document.getElementById("draw_button");
     button.onclick = function () {
         debug_view_draw_tileset();
-    }
+    };
+
+    document.getElementById("run_button").onclick = start;
+    document.getElementById("run_boot_rom_button").onclick = run_bios;
+    document.getElementById("run_ins_button").onclick = tick_instruction;
+
 };
 
 function debug_view_init(){
@@ -73,6 +82,38 @@ function debug_view_draw_tile(tile_index, tile_data){
     }
 }
 
+function start(){
+    setInterval(tick_frame, 0.02);
+}
+
+function display_info() {
+    ins_his_text.value = cpu.history.join('\n');
+    cpu_text.value = `
+    A: ${cpu.regs.a.toString(16)}, F: ${cpu.regs.f.toString(16)}, \n
+    B: ${cpu.regs.b.toString(16)}, C: ${cpu.regs.c.toString(16)}, \n
+    D: ${cpu.regs.d.toString(16)}, E: ${cpu.regs.e.toString(16)}, \n
+    H: ${cpu.regs.h.toString(16)}, L: ${cpu.regs.l.toString(16)}, \n
+    SP: ${cpu.regs.sp.toString(16)}, PC: ${cpu.regs.pc.toString(16)}.`;
+}
+
+function tick_instruction() {
+    let elapsed = cpu.tick();
+    gpu.tick(elapsed);
+
+    renderer_screen();
+    display_info();
+}
+
+function run_bios(){
+    while (mmu.boot_rom_mapped){
+        let elapsed = cpu.tick();
+        gpu.tick(elapsed);
+    }
+
+    renderer_screen();
+    display_info();
+}
+
 function tick_frame() {
     let cur_f = gpu.frames;
     while(gpu.frames === cur_f){
@@ -80,6 +121,10 @@ function tick_frame() {
         gpu.tick(elapsed);
     }
 
+    renderer_screen();
+}
+
+function renderer_screen(){
     for(let i=0; i<160*144; i++){
         let c = colorMap[gpu.screen_out[i]];
         main_image.data[i*4] = c;
@@ -90,7 +135,6 @@ function tick_frame() {
 
     main_ctx.putImageData(main_image, 0, 0);
     main_ctx.drawImage(main_canvas, 0, 0);
-    console.log("frame");
 }
 
 // while(true){

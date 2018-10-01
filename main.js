@@ -5,16 +5,17 @@ const CC = require('./cartridge_controller.js');
 
 const convertHrtime = require('convert-hrtime');
 
-let cartridge = new CC('t');
+let cartridge = new CC("./cartridges/cpu_instrs.gb");
+// let cartridge = new CC("cpu_test");
 let gpu = new GPU();
 let mmu = new MMU(cartridge, gpu);
-let cpu = new CPU(mmu);
+let cpu = new CPU(mmu, gpu);
 cartridge.extract_rom();
 var cl = 70224;
 var start_time = process.hrtime();
 while(true){
      // cpu.print_state();
-    if(cpu.cycles > 800000000) break;
+    // if(cpu.cycles > 800000000) break;
     try{
         let elapsed = cpu.tick();
         gpu.tick(elapsed);

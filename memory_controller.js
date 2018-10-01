@@ -13,15 +13,13 @@ class MemoryController{
             0x4,0x1,0x11,0xa8,0x0,0x1a,0x13,0xbe,0x20,0xfe,0x23,0x7d,0xfe,0x34,0x20,0xf5,0x6,0x19,0x78,0x86,0x23,0x5,0x20,0xfb,0x86,0x20,0xfe,0x3e,0x1,0xe0,0x50
         ];
 
-        this.interrupt_master_enable = 0;
-
         this.cc = cartridge;
         this.boot_rom_mapped = true;
         this.internal_ram = Array(0x2000).fill(0);
         this.high_speed_ram = Array(0x80).fill(0);
     }
 
-    interrupt_enabled(){ return !!this.interrupt_master_enable};
+    interrupt_enabled(){ return !!this.cpu.interrupt_master_enable};
 
     remove_boot_rom(){
         this.boot_rom_mapped = false;
@@ -58,9 +56,9 @@ class MemoryController{
 
             case 0xf000:
                 //Interrupt Vector
-                if(addr === 0xffff) return this.interrupt_master_enable;
+                if(addr === 0xffff) return this.cpu.interupt_vector.get_byte();
                 //Interrupt Request
-                if(addr === 0xff0f) throw `Interrupt request not implemented.`;
+                if(addr === 0xff0f) return this.cpu.interupt_requests.get_byte();
 
                 //Access to last haft of shadow RAM, and I/O, Interrupt, etc
                 let mask = addr & 0xf00;
@@ -72,10 +70,12 @@ class MemoryController{
                     if(sec_mask >= 0x40 && sec_mask < 0x50) return this.gpu.read_byte(addr);
                     //Zero Page RAM
                     if(sec_mask >= 0x80) return this.high_speed_ram[addr & 0x7f];
+
+                    console.warn(`MMU: Reading I/O blocks: ${addr.toString(16)}`);
+                    return 0xff;
                 }
 
                 console.warn(`MMU: Reading I/O blocks: ${addr.toString(16)}`);
-                return 0x00;
                 break;
             default:
                 console.warn(`MMU: Reading from unknown address mapping: ${addr.toString(16)}`);
@@ -114,17 +114,32 @@ class MemoryController{
                 break;
 
             case 0xf000:
-                if(addr === 0xffff) this.interrupt_master_enable = v;
-                if(addr === 0xff0f) console.error(`Interrupt request not implemented.`);
-                if(addr === 0xff50) this.boot_rom_mapped = false;
+                if(addr === 0xffff){ this.cpu.interupt_vector.set_byte(v); break;}
+                if(addr === 0xff0f){ this.cpu.interupt_requests.set_byte(v); break;}
+                if(addr === 0xff50){
+                    this.boot_rom_mapped = false; break;}
+
+                if(addr === 0xff01 || addr === 0xff02){
+                    //TODO: Serial port
+                    break;
+                }
+
                 let mask = addr & 0xf00;
                 if(mask < 0xe00){
                     this.internal_ram[addr & 0x1fff] = v;
                     break;
                 }
-
+                if(mask === 0xe00){
+                    if(addr >= 0xfea0) break;
+                    this.gpu.write_byte(addr, v); break;
+                }
                 if(mask >= 0xf00){
                     let sec_mask = addr & 0xff;
+
+                    if(sec_mask >= 0x10 && sec_mask <= 0x3f){
+                        //TODO: Sound devices :)
+                        break;
+                    }
 
                     //GPU I/O Registers
                     if(sec_mask >= 0x40 && sec_mask < 0x50){
@@ -139,7 +154,7 @@ class MemoryController{
                     }
                 }
 
-                console.warn(`MMU: Writing I/O blocks: ${addr.toString(16)}`);
+                console.warn(`MMU: Writing unknown address mapping: ${addr.toString(16)}`);
                 break;
             default:
                 console.warn(`MMU: Writing to unknown address mapping: ${addr.toString(16)}, PC: ${this.cpu.regs.pc.toString(16)}, INS: ${this.read_byte(this.cpu.regs.pc)}`);

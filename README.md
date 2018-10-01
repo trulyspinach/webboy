@@ -3,4 +3,4 @@
 
 Warning: The project is still in very early development stage.
 
-More informations will be add here soon, stay tuned for more updates!
+More information will be add here soon, stay tuned for more updates!
